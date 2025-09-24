@@ -1,0 +1,205 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  # Basic tests that don't require API key
+  basic-tests:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run basic tests (structure and parsing)
+      run: |
+        python test_basic.py
+    
+    - name: Run smoke tests (functionality without API)
+      run: |
+        python test_smoke.py
+    
+    - name: Test help command
+      run: |
+        python wikipedia_agent.py --help
+    
+    - name: Test error handling without API key
+      run: |
+        # Test missing API key error (should fail gracefully)
+        if python wikipedia_agent.py "test question" 2>&1 | grep -q "Google Gemini API key is required"; then
+          echo "✅ Properly handles missing API key"
+        else
+          echo "❌ Did not handle missing API key correctly"
+          exit 1
+        fi
+      env:
+        GEMINI_API_KEY: ""  # Clear the API key to test error handling
+
+  # Integration tests that require API key
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: basic-tests  # Run only after basic tests pass
+    
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11']  # Test on fewer versions for API-dependent tests
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Check API key availability
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        if [ -z "$GEMINI_API_KEY" ]; then
+          echo "❌ GEMINI_API_KEY secret is not set"
+          echo "Please add GEMINI_API_KEY to repository secrets"
+          exit 1
+        else
+          echo "✅ GEMINI_API_KEY is available"
+        fi
+    
+    - name: Run comprehensive integration tests
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        python test_integration.py
+    
+    - name: Test documented README examples
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        # Test examples from README
+        echo "Testing README examples..."
+        
+        echo "🧪 Testing: Who was the first person to walk on the moon?"
+        timeout 90 python wikipedia_agent.py "Who was the first person to walk on the moon?"
+        
+        echo "🧪 Testing: What is the capital of France?"
+        timeout 90 python wikipedia_agent.py "What is the capital of France?"
+        
+        echo "🧪 Testing: How does photosynthesis work? (with max-iterations)"
+        timeout 90 python wikipedia_agent.py --max-iterations 5 "How does photosynthesis work?"
+    
+    - name: Test CLI parameter variations
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "Testing CLI parameter variations..."
+        
+        # Test with API key parameter
+        echo "🧪 Testing --api-key parameter"
+        timeout 60 python wikipedia_agent.py --api-key "$GEMINI_API_KEY" "What is Python programming language?"
+        
+        # Test with max-iterations parameter
+        echo "🧪 Testing --max-iterations parameter"
+        timeout 60 python wikipedia_agent.py --max-iterations 2 "Who invented the telephone?"
+        
+        # Test combination of parameters
+        echo "🧪 Testing combined parameters"
+        timeout 60 python wikipedia_agent.py --api-key "$GEMINI_API_KEY" --max-iterations 1 "What is HTML?"
+    
+    - name: Test edge cases and error scenarios
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "Testing edge cases..."
+        
+        # Test with a very specific question
+        echo "🧪 Testing specific question"
+        timeout 60 python wikipedia_agent.py "What year did the Berlin Wall fall?"
+        
+        # Test with a broad question
+        echo "🧪 Testing broad question"
+        timeout 60 python wikipedia_agent.py --max-iterations 2 "What is artificial intelligence?"
+    
+    - name: Validate output format
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "Validating output format..."
+        
+        # Run a simple question and check output format
+        OUTPUT=$(timeout 60 python wikipedia_agent.py "What is the capital of Italy?" 2>&1)
+        
+        if echo "$OUTPUT" | grep -q "📝 ANSWER:"; then
+          echo "✅ Output contains expected answer section"
+        else
+          echo "❌ Output missing answer section"
+          echo "Actual output: $OUTPUT"
+          exit 1
+        fi
+        
+        if echo "$OUTPUT" | grep -q "🔍 Search terms used:"; then
+          echo "✅ Output contains search terms section"
+        else
+          echo "❌ Output missing search terms section"
+          echo "Actual output: $OUTPUT"
+          exit 1
+        fi
+        
+        echo "✅ Output format validation passed"
+    
+    - name: Test all documented features
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "Testing all documented features from README..."
+        python test_documented_features.py
+    
+    - name: Performance and reliability tests
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "Running performance and reliability tests..."
+        
+        # Test multiple questions in sequence to ensure stability
+        questions=(
+          "What is JavaScript?"
+          "Who painted the Mona Lisa?"
+          "What is the largest planet?"
+          "When did World War II end?"
+        )
+        
+        for question in "${questions[@]}"; do
+          echo "🧪 Testing: $question"
+          if timeout 90 python wikipedia_agent.py --max-iterations 2 "$question"; then
+            echo "✅ Success for: $question"
+          else
+            echo "❌ Failed for: $question"
+            exit 1
+          fi
+          sleep 2  # Brief pause between requests
+        done
+        
+        echo "✅ All performance tests passed"
