@@ -12,9 +12,12 @@ from wikipedia_agent import WikipediaAgent
 def test_init():
     """Test agent initialization."""
     try:
-        # This should work even without a valid API key for basic structure testing
-        agent = WikipediaAgent("fake_api_key", max_iterations=3)
+        # Test with a known provider but fake API key - should create the provider but mark as not available
+        agent = WikipediaAgent(provider_name="gemini", api_key="fake_api_key", max_iterations=3)
         assert agent.max_iterations == 3
+        assert agent.provider_name == "gemini"
+        # Provider should exist but not be available with fake key
+        assert agent.provider is not None
         print("✅ Agent initialization test passed")
         return True
     except Exception as e:
