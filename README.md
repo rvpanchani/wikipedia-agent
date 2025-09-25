@@ -65,6 +65,7 @@ docker-compose --profile ollama up wikipedia-agent-ollama
 export OPENAI_API_KEY="your-key-here"
 docker-compose --profile cloud up wikipedia-agent-cloud
 ```
+📦 **For comprehensive Docker documentation, see [DOCKER.md](DOCKER.md)**
 
 **Option F: Use .env file**
 ```bash
