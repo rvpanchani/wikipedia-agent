@@ -16,7 +16,9 @@ from providers import ProviderFactory, get_provider_config_from_env
 class WikipediaAgent:
     """A simple agent that answers questions using Wikipedia and various LLM providers."""
     
-    def __init__(self, provider_name: str = None, api_key: str = None, model: str = None, max_iterations: int = 3, **provider_kwargs):
+    def __init__(self, provider_name: str = None, api_key: str = None, model: str = None, 
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 max_iterations: int = 3, **provider_kwargs):
         """
         Initialize the Wikipedia agent.
         
@@ -24,6 +26,8 @@ class WikipediaAgent:
             provider_name: LLM provider name (openai, azure, gemini, ollama, huggingface)
             api_key: API key for the provider (if required)
             model: Model name to use (provider-specific)
+            temperature: Sampling temperature for generation (0.0 to 2.0)
+            max_tokens: Maximum tokens to generate
             max_iterations: Maximum number of search iterations
             **provider_kwargs: Additional provider-specific arguments
         """
@@ -44,6 +48,19 @@ class WikipediaAgent:
             provider_config['api_key'] = api_key
         if model:
             provider_config['model'] = model
+        
+        # Set generation parameters
+        provider_config['temperature'] = temperature
+        provider_config['max_tokens'] = max_tokens
+        
+        # Set default system prompt for Wikipedia agent
+        provider_config['system_prompt'] = (
+            "You are a helpful AI assistant that helps users find information from Wikipedia. "
+            "You are knowledgeable, precise, and always provide accurate information based on the content provided to you. "
+            "When generating search terms, focus on specific entities, events, people, and concepts. "
+            "When answering questions, be clear, concise, and factual."
+        )
+        
         provider_config.update(provider_kwargs)
         
         # Create provider
@@ -74,8 +91,12 @@ class WikipediaAgent:
         if previous_attempts:
             previous_info = f"\nPrevious search terms that didn't work: {', '.join(previous_attempts)}"
         
-        prompt = f"""
-You are an expert at finding information on Wikipedia. Given a question, suggest 3-5 specific Wikipedia search terms that are most likely to contain the answer.
+        search_system_prompt = (
+            "You are an expert at finding information on Wikipedia. Your task is to generate the most "
+            "effective search terms for finding relevant Wikipedia articles. Be specific and precise."
+        )
+        
+        prompt = f"""Given a question, suggest 3-5 specific Wikipedia search terms that are most likely to contain the answer.
 
 Question: {question}{previous_info}
 
@@ -89,7 +110,7 @@ Instructions:
 Search terms:"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response = self.provider.generate_content(prompt, system_prompt=search_system_prompt)
             search_terms = [term.strip() for term in response.strip().split('\n') if term.strip()]
             return search_terms[:5]  # Limit to 5 terms
         except Exception as e:
@@ -149,8 +170,12 @@ Search terms:"""
         Returns:
             Generated answer
         """
-        prompt = f"""
-Based on the following Wikipedia content, answer the user's question accurately and concisely.
+        answer_system_prompt = (
+            "You are a knowledgeable assistant that provides accurate answers based on Wikipedia content. "
+            "Always base your answers strictly on the provided information and be precise and factual."
+        )
+        
+        prompt = f"""Based on the following Wikipedia content, answer the user's question accurately and concisely.
 
 Wikipedia Content:
 {context}
@@ -166,7 +191,7 @@ Instructions:
 Answer:"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response = self.provider.generate_content(prompt, system_prompt=answer_system_prompt)
             return response.strip()
         except Exception as e:
             return f"Error generating answer: {e}"
@@ -264,6 +289,20 @@ Supported providers: openai, azure, gemini, ollama, huggingface
     )
     
     parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Sampling temperature for generation (0.0 to 2.0, default: 0.7)"
+    )
+    
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1000,
+        help="Maximum tokens to generate (default: 1000)"
+    )
+    
+    parser.add_argument(
         "--api-key",
         help="API key for the provider (can also be set via environment variables)"
     )
@@ -323,6 +362,8 @@ Supported providers: openai, azure, gemini, ollama, huggingface
             provider_name=args.provider,
             api_key=args.api_key,
             model=args.model,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
             max_iterations=args.max_iterations,
             **provider_kwargs
         )

@@ -13,14 +13,19 @@ import warnings
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
     
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
         self.api_key = api_key
         self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
         self.kwargs = kwargs
     
     @abstractmethod
-    def generate_content(self, prompt: str) -> str:
-        """Generate content from a prompt."""
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        """Generate content from a prompt with optional system prompt override."""
         pass
     
     @abstractmethod
@@ -33,30 +38,45 @@ class LLMProvider(ABC):
     def get_default_model(cls) -> str:
         """Get the default model for this provider."""
         pass
+    
+    def _prepare_messages(self, prompt: str, system_prompt: Optional[str] = None) -> List[Dict[str, str]]:
+        """Prepare messages for chat completion APIs with proper system prompt handling."""
+        messages = []
+        
+        # Use provided system prompt or instance default
+        effective_system_prompt = system_prompt or self.system_prompt
+        if effective_system_prompt:
+            messages.append({"role": "system", "content": effective_system_prompt})
+        
+        messages.append({"role": "user", "content": prompt})
+        return messages
 
 
 class OpenAIProvider(LLMProvider):
     """OpenAI API provider."""
     
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, **kwargs)
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.client = None
         if self.is_available():
             import openai
             self.client = openai.OpenAI(api_key=self.api_key)
     
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate content using OpenAI API."""
         if not self.client:
             raise RuntimeError("OpenAI client not initialized")
         
         try:
+            messages = self._prepare_messages(prompt, system_prompt)
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=self.kwargs.get('max_tokens', 1000)
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -79,8 +99,10 @@ class AzureOpenAIProvider(LLMProvider):
     """Azure OpenAI API provider."""
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
-                 azure_endpoint: Optional[str] = None, api_version: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, **kwargs)
+                 azure_endpoint: Optional[str] = None, api_version: Optional[str] = None,
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
@@ -93,17 +115,18 @@ class AzureOpenAIProvider(LLMProvider):
                 api_version=self.api_version
             )
     
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate content using Azure OpenAI API."""
         if not self.client:
             raise RuntimeError("Azure OpenAI client not initialized")
         
         try:
+            messages = self._prepare_messages(prompt, system_prompt)
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=self.kwargs.get('max_tokens', 1000)
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -125,22 +148,60 @@ class AzureOpenAIProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider."""
     
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, **kwargs)
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None,
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.client = None
         if self.is_available():
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
-            self.client = genai.GenerativeModel(self.model)
+            
+            # Configure generation settings
+            generation_config = {
+                "temperature": self.temperature,
+                "max_output_tokens": self.max_tokens,
+            }
+            
+            # Set up system instruction if provided
+            system_instruction = system_prompt or self.system_prompt
+            if system_instruction:
+                self.client = genai.GenerativeModel(
+                    self.model, 
+                    generation_config=generation_config,
+                    system_instruction=system_instruction
+                )
+            else:
+                self.client = genai.GenerativeModel(
+                    self.model,
+                    generation_config=generation_config
+                )
     
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate content using Gemini API."""
         if not self.client:
             raise RuntimeError("Gemini client not initialized")
         
         try:
-            response = self.client.generate_content(prompt)
+            # If system prompt is provided and different from the initialized one, 
+            # we need to recreate the client
+            effective_system_prompt = system_prompt or self.system_prompt
+            if system_prompt and system_prompt != self.system_prompt:
+                import google.generativeai as genai
+                generation_config = {
+                    "temperature": self.temperature,
+                    "max_output_tokens": self.max_tokens,
+                }
+                temp_client = genai.GenerativeModel(
+                    self.model,
+                    generation_config=generation_config,
+                    system_instruction=system_prompt
+                )
+                response = temp_client.generate_content(prompt)
+            else:
+                response = self.client.generate_content(prompt)
+            
             return response.text.strip()
         except Exception as e:
             raise RuntimeError(f"Gemini API error: {e}")
@@ -162,8 +223,9 @@ class OllamaProvider(LLMProvider):
     """Ollama local API provider."""
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
-                 base_url: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, **kwargs)
+                 base_url: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         self.client = None
@@ -175,17 +237,18 @@ class OllamaProvider(LLMProvider):
                 api_key="ollama"  # Ollama doesn't require real API key
             )
     
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate content using Ollama API."""
         if not self.client:
             raise RuntimeError("Ollama client not initialized")
         
         try:
+            messages = self._prepare_messages(prompt, system_prompt)
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=self.kwargs.get('max_tokens', 1000)
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -204,15 +267,16 @@ class OllamaProvider(LLMProvider):
     
     @classmethod
     def get_default_model(cls) -> str:
-        return "llama2"
+        return "phi3:mini"  # Smallest efficient model
 
 
 class HuggingFaceProvider(LLMProvider):
     """Hugging Face API provider (using OpenAI-compatible endpoint)."""
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
-                 base_url: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, **kwargs)
+                 base_url: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000, 
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.base_url = base_url or os.getenv("HUGGINGFACE_BASE_URL", "https://api.huggingface.co/v1")
         self.client = None
@@ -223,17 +287,18 @@ class HuggingFaceProvider(LLMProvider):
                 api_key=self.api_key
             )
     
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Generate content using Hugging Face API."""
         if not self.client:
             raise RuntimeError("Hugging Face client not initialized")
         
         try:
+            messages = self._prepare_messages(prompt, system_prompt)
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=self.kwargs.get('max_tokens', 1000)
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
