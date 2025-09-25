@@ -48,7 +48,7 @@ jobs:
     - name: Test error handling without API key
       run: |
         # Test missing API key error (should fail gracefully)
-        if python wikipedia_agent.py "test question" 2>&1 | grep -q "Google Gemini API key is required"; then
+        if python wikipedia_agent.py "test question" 2>&1 | grep -q "No properly configured LLM provider found"; then
           echo "✅ Properly handles missing API key"
         else
           echo "❌ Did not handle missing API key correctly"
@@ -56,6 +56,9 @@ jobs:
         fi
       env:
         GEMINI_API_KEY: ""  # Clear the API key to test error handling
+        OPENAI_API_KEY: ""  # Clear all API keys
+        AZURE_OPENAI_API_KEY: ""
+        HUGGINGFACE_API_KEY: ""
 
   # Integration tests that require API key
   integration-tests:
@@ -86,27 +89,47 @@ jobs:
     - name: Check API key availability
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        if [ -z "$GEMINI_API_KEY" ]; then
-          echo "❌ GEMINI_API_KEY secret is not set"
-          echo "Please add GEMINI_API_KEY to repository secrets"
-          exit 1
-        else
+        # Check if at least one API key is available
+        if [ -n "$GEMINI_API_KEY" ]; then
           echo "✅ GEMINI_API_KEY is available"
+          echo "PROVIDER=gemini" >> $GITHUB_ENV
+        elif [ -n "$OPENAI_API_KEY" ]; then
+          echo "✅ OPENAI_API_KEY is available"
+          echo "PROVIDER=openai" >> $GITHUB_ENV
+        elif [ -n "$AZURE_OPENAI_API_KEY" ] && [ -n "$AZURE_OPENAI_ENDPOINT" ]; then
+          echo "✅ AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT are available"
+          echo "PROVIDER=azure" >> $GITHUB_ENV  
+        else
+          echo "❌ No API keys available for testing"
+          echo "Please add at least one of these secrets:"
+          echo "  - GEMINI_API_KEY for Google Gemini"
+          echo "  - OPENAI_API_KEY for OpenAI"
+          echo "  - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT for Azure OpenAI"
+          exit 1
         fi
     
     - name: Run comprehensive integration tests
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
         python test_integration.py
     
     - name: Test documented README examples
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
         # Test examples from README
-        echo "Testing README examples..."
+        echo "Testing README examples with provider: $PROVIDER"
         
         echo "🧪 Testing: Who was the first person to walk on the moon?"
         timeout 90 python wikipedia_agent.py "Who was the first person to walk on the moon?"
@@ -120,26 +143,40 @@ jobs:
     - name: Test CLI parameter variations
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        echo "Testing CLI parameter variations..."
+        echo "Testing CLI parameter variations with provider: $PROVIDER"
         
-        # Test with API key parameter
-        echo "🧪 Testing --api-key parameter"
-        timeout 60 python wikipedia_agent.py --api-key "$GEMINI_API_KEY" "What is Python programming language?"
+        # Test with explicit provider and API key parameter
+        if [ "$PROVIDER" = "gemini" ]; then
+          echo "🧪 Testing --api-key parameter with Gemini"
+          timeout 60 python wikipedia_agent.py --provider gemini --api-key "$GEMINI_API_KEY" "What is Python programming language?"
+        elif [ "$PROVIDER" = "openai" ]; then
+          echo "🧪 Testing --api-key parameter with OpenAI"
+          timeout 60 python wikipedia_agent.py --provider openai --api-key "$OPENAI_API_KEY" "What is Python programming language?"
+        elif [ "$PROVIDER" = "azure" ]; then
+          echo "🧪 Testing --api-key parameter with Azure"
+          timeout 60 python wikipedia_agent.py --provider azure --api-key "$AZURE_OPENAI_API_KEY" --azure-endpoint "$AZURE_OPENAI_ENDPOINT" "What is Python programming language?"
+        fi
         
         # Test with max-iterations parameter
         echo "🧪 Testing --max-iterations parameter"
         timeout 60 python wikipedia_agent.py --max-iterations 2 "Who invented the telephone?"
         
-        # Test combination of parameters
-        echo "🧪 Testing combined parameters"
-        timeout 60 python wikipedia_agent.py --api-key "$GEMINI_API_KEY" --max-iterations 1 "What is HTML?"
+        # Test combination of parameters with temperature and max-tokens
+        echo "🧪 Testing combined parameters including new temperature/max-tokens"
+        timeout 60 python wikipedia_agent.py --max-iterations 1 --temperature 0.5 --max-tokens 100 "What is HTML?"
     
     - name: Test edge cases and error scenarios
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        echo "Testing edge cases..."
+        echo "Testing edge cases with provider: $PROVIDER"
         
         # Test with a very specific question
         echo "🧪 Testing specific question"
@@ -152,8 +189,11 @@ jobs:
     - name: Validate output format
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        echo "Validating output format..."
+        echo "Validating output format with provider: $PROVIDER"
         
         # Run a simple question and check output format
         OUTPUT=$(timeout 60 python wikipedia_agent.py "What is the capital of Italy?" 2>&1)
@@ -174,20 +214,35 @@ jobs:
           exit 1
         fi
         
+        # Check that provider is shown in output
+        if echo "$OUTPUT" | grep -q "🤖 Using.*provider"; then
+          echo "✅ Output shows provider information"
+        else
+          echo "❌ Output missing provider information"
+          echo "Actual output: $OUTPUT"
+          exit 1
+        fi
+        
         echo "✅ Output format validation passed"
     
     - name: Test all documented features
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        echo "Testing all documented features from README..."
+        echo "Testing all documented features from README with provider: $PROVIDER"
         python test_documented_features.py
     
     - name: Performance and reliability tests
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       run: |
-        echo "Running performance and reliability tests..."
+        echo "Running performance and reliability tests with provider: $PROVIDER"
         
         # Test multiple questions in sequence to ensure stability
         questions=(

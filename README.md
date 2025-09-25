@@ -1,13 +1,16 @@
 # Wikipedia Agent
 
-A simple command line agent to answer natural language questions using Wikipedia as a knowledge source and Google's Gemini 2.0 Flash model for intelligent search term generation and answer synthesis.
+A simple command line agent to answer natural language questions using Wikipedia as a knowledge source and various LLM providers (OpenAI, Azure OpenAI, Google Gemini, Ollama, Hugging Face) for intelligent search term generation and answer synthesis.
 
 ## Features
 
+- **Multiple LLM Providers**: Support for OpenAI, Azure OpenAI, Google Gemini, Ollama, and Hugging Face
+- **Auto-Detection**: Automatically detects available providers based on your configuration
 - **Natural Language Questions**: Ask questions in plain English
-- **Intelligent Search**: Uses Google Gemini 2.0 Flash to generate relevant Wikipedia search terms
+- **Intelligent Search**: Uses AI to generate relevant Wikipedia search terms
 - **Iterative Search**: Automatically tries multiple search strategies until it finds a satisfactory answer
-- **Simple CLI**: Easy-to-use command line interface
+- **Simple CLI**: Easy-to-use command line interface with extensive configuration options
+- **Backward Compatible**: Existing Gemini setups continue to work
 - **No Complex Frameworks**: Built with minimal dependencies for maximum reliability
 
 ## Installation
@@ -23,35 +26,70 @@ cd wikipedia-agent
 pip install -r requirements.txt
 ```
 
-3. Get a Google Gemini API key:
-   - Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
-   - Create a new API key
-   - Copy the API key
+3. Choose and configure an LLM provider:
 
-4. Set up your API key (choose one method):
+### Quick Setup Options
 
-   **Option A: Environment variable**
-   ```bash
-   export GEMINI_API_KEY="your_api_key_here"
-   ```
+**Option A: OpenAI (Recommended)**
+```bash
+export OPENAI_API_KEY="sk-your-openai-api-key-here"
+```
+Get your API key: https://platform.openai.com/api-keys
 
-   **Option B: .env file**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your API key
-   ```
+**Option B: Google Gemini (Free tier available)**
+```bash
+export GEMINI_API_KEY="your-gemini-api-key-here"
+```
+Get your API key: https://makersuite.google.com/app/apikey
 
-   **Option C: Command line argument**
-   ```bash
-   python wikipedia_agent.py --api-key "your_api_key_here" "your question"
-   ```
+**Option C: Ollama (Local/Private)**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama serve
+ollama pull llama2
+```
+
+**Option D: Azure OpenAI**
+```bash
+export AZURE_OPENAI_API_KEY="your-azure-key"
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+```
+
+**Option E: Use .env file**
+```bash
+cp .env.example .env
+# Edit .env with your preferred provider settings
+```
+
+For detailed provider configuration, see [PROVIDERS.md](PROVIDERS.md).
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
+# Auto-detects available provider
 python wikipedia_agent.py "Who was the first person to walk on the moon?"
+```
+
+### Provider-Specific Usage
+
+```bash
+# Use OpenAI explicitly
+python wikipedia_agent.py --provider openai "What is quantum computing?"
+
+# Use specific model
+python wikipedia_agent.py --provider openai --model gpt-4 "Explain photosynthesis"
+
+# Use Azure OpenAI
+python wikipedia_agent.py --provider azure --model gpt-35-turbo "How does AI work?"
+
+# Use local Ollama
+python wikipedia_agent.py --provider ollama --model llama2 "What is machine learning?"
+
+# Use Gemini (legacy compatibility)
+python wikipedia_agent.py --provider gemini "What causes earthquakes?"
 ```
 
 ### Advanced Usage
@@ -60,13 +98,29 @@ python wikipedia_agent.py "Who was the first person to walk on the moon?"
 # Increase search iterations for complex questions
 python wikipedia_agent.py --max-iterations 5 "How does photosynthesis work in detail?"
 
-# Use API key from command line
-python wikipedia_agent.py --api-key "your_key" "What is quantum computing?"
+# Provider with custom configuration
+python wikipedia_agent.py --provider azure \
+    --azure-endpoint "https://custom.openai.azure.com/" \
+    --model "gpt-4" \
+    "Complex scientific question"
+
+# API key from command line (any provider)
+python wikipedia_agent.py --provider openai --api-key "your_key" "What is quantum computing?"
+```
+
+### Help and Options
+
+```bash
+# Show all available options
+python wikipedia_agent.py --help
+
+# Supported providers: openai, azure, gemini, ollama, huggingface
 ```
 
 ### Example Output
 
 ```
+🤖 Using openai provider with model: gpt-3.5-turbo
 🤔 Processing question: Who was the first person to walk on the moon?
 
 📍 Iteration 1/3

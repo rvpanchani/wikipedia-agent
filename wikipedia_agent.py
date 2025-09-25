@@ -1,41 +1,84 @@
 #!/usr/bin/env python3
 """
 Wikipedia Agent - A simple command line agent to answer natural language questions
-using Wikipedia as knowledge source and Google Gemini for natural language processing.
+using Wikipedia as knowledge source and various LLM providers (OpenAI, Azure, Gemini, Ollama, etc.).
 """
 
 import os
 import sys
 import argparse
 import wikipedia
-import google.generativeai as genai
 from dotenv import load_dotenv
 from typing import List, Optional, Tuple
+from providers import ProviderFactory, get_provider_config_from_env
 
 
 class WikipediaAgent:
-    """A simple agent that answers questions using Wikipedia and Gemini LLM."""
+    """A simple agent that answers questions using Wikipedia and various LLM providers."""
     
-    def __init__(self, api_key: str, max_iterations: int = 3):
+    def __init__(self, provider_name: str = None, api_key: str = None, model: str = None, 
+                 temperature: float = 0.7, max_tokens: int = 1000, 
+                 max_iterations: int = 3, **provider_kwargs):
         """
         Initialize the Wikipedia agent.
         
         Args:
-            api_key: Google Gemini API key
+            provider_name: LLM provider name (openai, azure, gemini, ollama, huggingface)
+            api_key: API key for the provider (if required)
+            model: Model name to use (provider-specific)
+            temperature: Sampling temperature for generation (0.0 to 2.0)
+            max_tokens: Maximum tokens to generate
             max_iterations: Maximum number of search iterations
+            **provider_kwargs: Additional provider-specific arguments
         """
         self.max_iterations = max_iterations
         
-        # Configure Gemini
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # Auto-detect provider if not specified
+        if not provider_name:
+            provider_name = ProviderFactory.auto_detect_provider()
+            if not provider_name:
+                raise ValueError(
+                    "No LLM provider detected. Please specify a provider and configure API keys.\n"
+                    "Available providers: " + ", ".join(ProviderFactory.get_available_providers())
+                )
+        
+        # Get provider configuration from environment if not provided
+        provider_config = get_provider_config_from_env(provider_name)
+        if api_key:
+            provider_config['api_key'] = api_key
+        if model:
+            provider_config['model'] = model
+        
+        # Set generation parameters
+        provider_config['temperature'] = temperature
+        provider_config['max_tokens'] = max_tokens
+        
+        # Set default system prompt for Wikipedia agent
+        provider_config['system_prompt'] = (
+            "You are a helpful AI assistant that helps users find information from Wikipedia. "
+            "You are knowledgeable, precise, and always provide accurate information based on the content provided to you. "
+            "When generating search terms, focus on specific entities, events, people, and concepts. "
+            "When answering questions, be clear, concise, and factual."
+        )
+        
+        provider_config.update(provider_kwargs)
+        
+        # Create provider
+        try:
+            self.provider = ProviderFactory.create_provider(provider_name, **provider_config)
+            if not self.provider.is_available():
+                raise RuntimeError(f"Provider '{provider_name}' is not properly configured or available")
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize provider '{provider_name}': {e}")
+        
+        self.provider_name = provider_name
         
         # Wikipedia configuration
         wikipedia.set_lang("en")
     
     def generate_search_terms(self, question: str, previous_attempts: List[str] = None) -> List[str]:
         """
-        Generate Wikipedia search terms for a given question using Gemini.
+        Generate Wikipedia search terms for a given question using the LLM provider.
         
         Args:
             question: The user's question
@@ -48,8 +91,12 @@ class WikipediaAgent:
         if previous_attempts:
             previous_info = f"\nPrevious search terms that didn't work: {', '.join(previous_attempts)}"
         
-        prompt = f"""
-You are an expert at finding information on Wikipedia. Given a question, suggest 3-5 specific Wikipedia search terms that are most likely to contain the answer.
+        search_system_prompt = (
+            "You are an expert at finding information on Wikipedia. Your task is to generate the most "
+            "effective search terms for finding relevant Wikipedia articles. Be specific and precise."
+        )
+        
+        prompt = f"""Given a question, suggest 3-5 specific Wikipedia search terms that are most likely to contain the answer.
 
 Question: {question}{previous_info}
 
@@ -63,8 +110,8 @@ Instructions:
 Search terms:"""
 
         try:
-            response = self.model.generate_content(prompt)
-            search_terms = [term.strip() for term in response.text.strip().split('\n') if term.strip()]
+            response = self.provider.generate_content(prompt, system_prompt=search_system_prompt)
+            search_terms = [term.strip() for term in response.strip().split('\n') if term.strip()]
             return search_terms[:5]  # Limit to 5 terms
         except Exception as e:
             print(f"Error generating search terms: {e}")
@@ -123,8 +170,12 @@ Search terms:"""
         Returns:
             Generated answer
         """
-        prompt = f"""
-Based on the following Wikipedia content, answer the user's question accurately and concisely.
+        answer_system_prompt = (
+            "You are a knowledgeable assistant that provides accurate answers based on Wikipedia content. "
+            "Always base your answers strictly on the provided information and be precise and factual."
+        )
+        
+        prompt = f"""Based on the following Wikipedia content, answer the user's question accurately and concisely.
 
 Wikipedia Content:
 {context}
@@ -140,8 +191,8 @@ Instructions:
 Answer:"""
 
         try:
-            response = self.model.generate_content(prompt)
-            return response.text.strip()
+            response = self.provider.generate_content(prompt, system_prompt=answer_system_prompt)
+            return response.strip()
         except Exception as e:
             return f"Error generating answer: {e}"
     
@@ -205,8 +256,12 @@ def main():
         epilog="""
 Examples:
   python wikipedia_agent.py "Who was the first person to walk on the moon?"
-  python wikipedia_agent.py "What is the capital of France?"
+  python wikipedia_agent.py --provider openai "What is the capital of France?"
+  python wikipedia_agent.py --provider azure --model gpt-4 "How does photosynthesis work?"
+  python wikipedia_agent.py --provider ollama --model llama2 "What is quantum computing?"
   python wikipedia_agent.py --max-iterations 5 "How does photosynthesis work?"
+
+Supported providers: openai, azure, gemini, ollama, huggingface
         """
     )
     
@@ -223,8 +278,56 @@ Examples:
     )
     
     parser.add_argument(
+        "--provider",
+        choices=['openai', 'azure', 'azure-openai', 'gemini', 'google', 'ollama', 'huggingface', 'hf'],
+        help="LLM provider to use (auto-detected if not specified)"
+    )
+    
+    parser.add_argument(
+        "--model",
+        help="Model to use (provider-specific, uses default if not specified)"
+    )
+    
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Sampling temperature for generation (0.0 to 2.0, default: 0.7)"
+    )
+    
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1000,
+        help="Maximum tokens to generate (default: 1000)"
+    )
+    
+    parser.add_argument(
         "--api-key",
-        help="Google Gemini API key (can also be set via GEMINI_API_KEY environment variable)"
+        help="API key for the provider (can also be set via environment variables)"
+    )
+    
+    # Legacy Gemini support for backward compatibility
+    parser.add_argument(
+        "--gemini-api-key",
+        help="Google Gemini API key (deprecated, use --api-key with --provider gemini)"
+    )
+    
+    # Azure-specific options
+    parser.add_argument(
+        "--azure-endpoint",
+        help="Azure OpenAI endpoint URL"
+    )
+    
+    parser.add_argument(
+        "--azure-api-version",
+        help="Azure OpenAI API version"
+    )
+    
+    # Ollama-specific options
+    parser.add_argument(
+        "--ollama-base-url",
+        help="Ollama base URL (default: http://localhost:11434)"
     )
     
     args = parser.parse_args()
@@ -232,17 +335,40 @@ Examples:
     # Load environment variables
     load_dotenv()
     
-    # Get API key
-    api_key = args.api_key or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ Error: Google Gemini API key is required.")
-        print("   Set it via --api-key argument or GEMINI_API_KEY environment variable.")
-        print("   You can get an API key from: https://makersuite.google.com/app/apikey")
-        sys.exit(1)
+    # Handle legacy Gemini API key for backward compatibility
+    if args.gemini_api_key and not args.provider:
+        args.provider = 'gemini'
+        args.api_key = args.gemini_api_key
+        print("⚠️  Using deprecated --gemini-api-key. Please use --provider gemini --api-key instead.")
+    
+    # Handle legacy GEMINI_API_KEY environment variable
+    if not args.provider and not args.api_key and os.getenv("GEMINI_API_KEY"):
+        args.provider = 'gemini'
+        args.api_key = os.getenv("GEMINI_API_KEY")
+        print("⚠️  Using GEMINI_API_KEY environment variable. Consider using OPENAI_API_KEY or other provider-specific variables.")
+    
+    # Prepare provider arguments
+    provider_kwargs = {}
+    if args.azure_endpoint:
+        provider_kwargs['azure_endpoint'] = args.azure_endpoint
+    if args.azure_api_version:
+        provider_kwargs['api_version'] = args.azure_api_version
+    if args.ollama_base_url:
+        provider_kwargs['base_url'] = args.ollama_base_url
     
     try:
         # Initialize agent
-        agent = WikipediaAgent(api_key, args.max_iterations)
+        agent = WikipediaAgent(
+            provider_name=args.provider,
+            api_key=args.api_key,
+            model=args.model,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            max_iterations=args.max_iterations,
+            **provider_kwargs
+        )
+        
+        print(f"🤖 Using {agent.provider_name} provider with model: {agent.provider.model}")
         
         # Process query
         answer, search_terms = agent.process_query(args.question)
@@ -257,7 +383,25 @@ Examples:
             print(f"\n🔍 Search terms used: {', '.join(search_terms)}")
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        error_msg = str(e)
+        if "No LLM provider detected" in error_msg or "not properly configured" in error_msg:
+            print("❌ Error: No properly configured LLM provider found.")
+            print("\n🔧 Configuration Help:")
+            print("Set one of these environment variables:")
+            print("  - OPENAI_API_KEY for OpenAI")
+            print("  - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT for Azure OpenAI")
+            print("  - GEMINI_API_KEY for Google Gemini")
+            print("  - HUGGINGFACE_API_KEY for Hugging Face")
+            print("  - Or run Ollama locally at http://localhost:11434")
+            print("\nOr use command line arguments:")
+            print("  python wikipedia_agent.py --provider openai --api-key YOUR_KEY \"your question\"")
+            print("\nGet API keys from:")
+            print("  - OpenAI: https://platform.openai.com/api-keys")
+            print("  - Azure: https://portal.azure.com")
+            print("  - Gemini: https://makersuite.google.com/app/apikey")
+            print("  - Hugging Face: https://huggingface.co/settings/tokens")
+        else:
+            print(f"❌ Error: {error_msg}")
         sys.exit(1)
 
 

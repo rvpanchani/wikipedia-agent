@@ -75,12 +75,33 @@ def main():
     print("🔍 Testing Documented Wikipedia Agent Features")
     print("=" * 80)
     
-    # Check if API key is available
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ GEMINI_API_KEY environment variable is required")
-        print("   Please set the API key to test documented features")
+    # Check if any API key is available (support multiple providers)
+    available_providers = []
+    if os.getenv("GEMINI_API_KEY"):
+        available_providers.append("Gemini")
+    if os.getenv("OPENAI_API_KEY"):
+        available_providers.append("OpenAI")
+    if os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+        available_providers.append("Azure OpenAI")
+    if os.getenv("HUGGINGFACE_API_KEY"):
+        available_providers.append("Hugging Face")
+    
+    if not available_providers:
+        print("❌ No API keys found for testing documented features")
+        print("   Set one of these environment variables:")
+        print("   - GEMINI_API_KEY for Google Gemini")
+        print("   - OPENAI_API_KEY for OpenAI")
+        print("   - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT for Azure OpenAI")
+        print("   - HUGGINGFACE_API_KEY for Hugging Face")
         sys.exit(1)
+    
+    print(f"🔑 Found API keys for: {', '.join(available_providers)}")
+    
+    # Use any available API key for testing
+    api_key = (os.getenv("OPENAI_API_KEY") or 
+               os.getenv("GEMINI_API_KEY") or 
+               os.getenv("AZURE_OPENAI_API_KEY") or 
+               os.getenv("HUGGINGFACE_API_KEY"))
     
     tests_passed = 0
     total_tests = 0
@@ -123,21 +144,25 @@ def main():
     
     # Test 5: Error handling without API key (documented requirement)
     total_tests += 1
-    env_backup = os.environ.get("GEMINI_API_KEY")
-    if env_backup:
-        del os.environ["GEMINI_API_KEY"]
+    # Backup all API keys
+    env_backup = {}
+    api_keys = ["GEMINI_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "HUGGINGFACE_API_KEY"]
+    for key in api_keys:
+        if key in os.environ:
+            env_backup[key] = os.environ[key]
+            del os.environ[key]
     
     if test_documented_feature(
         "Error Handling - Missing API Key",
         ["python", "wikipedia_agent.py", "test question"],
-        ["Google Gemini API key is required"],
+        ["No properly configured LLM provider found"],
         should_fail=True
     ):
         tests_passed += 1
     
     # Restore environment
-    if env_backup:
-        os.environ["GEMINI_API_KEY"] = env_backup
+    for key, value in env_backup.items():
+        os.environ[key] = value
     
     # Test 6: README example questions
     readme_questions = [
