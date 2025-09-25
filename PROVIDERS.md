@@ -129,21 +129,22 @@ python wikipedia_agent.py --provider gemini --model "gemini-pro" "your question"
 ```bash
 # Environment variables
 export OLLAMA_BASE_URL="http://localhost:11434"  # Optional, this is default
-export OLLAMA_MODEL="llama2"  # Optional
+export OLLAMA_MODEL="qwen3:0.6b"  # Optional, new default model
 
 # First time setup
-ollama pull llama2  # or codellama, mistral, etc.
+ollama pull qwen3:0.6b  # New recommended model (523MB)
 
 # Command line
-python wikipedia_agent.py --provider ollama --model llama2 "your question"
+python wikipedia_agent.py --provider ollama --model qwen3:0.6b "your question"
 ```
 
 **Popular models:**
+- `qwen3:0.6b` (default, 523MB, 40K context window, very efficient)
 - `llama2` (7B parameters, good balance)
 - `llama2:13b` (larger, more capable)
 - `codellama` (specialized for code)
 - `mistral` (7B, efficient)
-- `phi` (3B, fast, smaller)
+- `phi3:mini` (3B, fast, smaller)
 
 ### Hugging Face Configuration
 
@@ -167,6 +168,52 @@ The agent automatically detects available providers in this order:
 3. **Google Gemini** (if `GEMINI_API_KEY` is set)
 4. **Hugging Face** (if `HUGGINGFACE_API_KEY` is set)
 5. **Ollama** (if local server is running at `http://localhost:11434`)
+
+## Docker Usage
+
+### Quick Start with Docker
+
+**Option 1: Use Ollama (No API keys required)**
+```bash
+# Build and run with Ollama
+docker-compose --profile ollama up wikipedia-agent-ollama
+
+# Or directly with Docker
+docker build -t wikipedia-agent .
+docker run -p 11434:11434 wikipedia-agent "What is artificial intelligence?"
+```
+
+**Option 2: Use Cloud Providers (API keys required)**
+```bash
+# Set your API keys
+export OPENAI_API_KEY="your-key-here"
+# or export GEMINI_API_KEY="your-key-here"
+
+# Run with cloud providers
+docker-compose --profile cloud up wikipedia-agent-cloud
+```
+
+**Option 3: Development Environment**
+```bash
+# Full development setup with all providers
+docker-compose --profile dev up wikipedia-agent-dev
+```
+
+### Docker Environment Variables
+
+```bash
+# Ollama Configuration
+USE_OLLAMA=true
+OLLAMA_MODEL=qwen3:0.6b
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Cloud Provider Configuration (set as needed)
+OPENAI_API_KEY=your-key-here
+GEMINI_API_KEY=your-key-here
+AZURE_OPENAI_API_KEY=your-key-here
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+HUGGINGFACE_API_KEY=your-key-here
+```
 
 ## Advanced Usage
 

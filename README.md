@@ -56,7 +56,17 @@ export AZURE_OPENAI_API_KEY="your-azure-key"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 ```
 
-**Option E: Use .env file**
+**Option E: Docker (Recommended for easy setup)**
+```bash
+# Use Ollama (no API keys required)
+docker-compose --profile ollama up wikipedia-agent-ollama
+
+# Use cloud providers (API keys required)
+export OPENAI_API_KEY="your-key-here"
+docker-compose --profile cloud up wikipedia-agent-cloud
+```
+
+**Option F: Use .env file**
 ```bash
 cp .env.example .env
 # Edit .env with your preferred provider settings
@@ -65,6 +75,30 @@ cp .env.example .env
 For detailed provider configuration, see [PROVIDERS.md](PROVIDERS.md).
 
 ## Usage
+
+### Docker Usage (Recommended)
+
+**Quick Start with Ollama (No API keys needed):**
+```bash
+# Build and run with Ollama using qwen3:0.6b model
+docker-compose --profile ollama up wikipedia-agent-ollama
+
+# Ask a question
+docker run --rm wikipedia-agent "Who was the first person to walk on the moon?"
+
+# Interactive mode
+docker-compose --profile dev up wikipedia-agent-dev
+```
+
+**With Cloud Providers:**
+```bash
+# Set your API keys
+export OPENAI_API_KEY="your-key-here"
+export GEMINI_API_KEY="your-key-here"
+
+# Run with cloud providers
+docker-compose --profile cloud up wikipedia-agent-cloud
+```
 
 ### Basic Usage
 
@@ -85,8 +119,8 @@ python wikipedia_agent.py --provider openai --model gpt-4 "Explain photosynthesi
 # Use Azure OpenAI
 python wikipedia_agent.py --provider azure --model gpt-35-turbo "How does AI work?"
 
-# Use local Ollama
-python wikipedia_agent.py --provider ollama --model llama2 "What is machine learning?"
+# Use local Ollama with qwen3:0.6b (new default model)
+python wikipedia_agent.py --provider ollama --model qwen3:0.6b "What is machine learning?"
 
 # Use Gemini (legacy compatibility)
 python wikipedia_agent.py --provider gemini "What causes earthquakes?"

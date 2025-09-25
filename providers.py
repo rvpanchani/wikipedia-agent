@@ -267,7 +267,7 @@ class OllamaProvider(LLMProvider):
     
     @classmethod
     def get_default_model(cls) -> str:
-        return "phi3:mini"  # Smallest efficient model
+        return "qwen3:0.6b"  # Efficient model with 40K context window (523MB)
 
 
 class HuggingFaceProvider(LLMProvider):
