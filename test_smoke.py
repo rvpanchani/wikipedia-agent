@@ -81,7 +81,11 @@ def test_error_handling():
     try:
         # Test without API key - should show proper error message
         env = os.environ.copy()
-        env.pop("GEMINI_API_KEY", None)  # Remove API key if it exists
+        # Remove all possible API keys
+        env.pop("GEMINI_API_KEY", None)
+        env.pop("OPENAI_API_KEY", None)
+        env.pop("AZURE_OPENAI_API_KEY", None)
+        env.pop("HUGGINGFACE_API_KEY", None)
         
         result = subprocess.run(
             ["python", "wikipedia_agent.py", "test question"],
@@ -98,7 +102,7 @@ def test_error_handling():
             return False
         
         error_output = result.stderr + result.stdout
-        if "Google Gemini API key is required" not in error_output:
+        if "No properly configured LLM provider found" not in error_output:
             print(f"❌ Incorrect error message: {error_output}")
             return False
         
@@ -115,7 +119,8 @@ def test_dependencies_available():
         dependencies = [
             "wikipedia",
             "google.generativeai", 
-            "python_dotenv"
+            "python_dotenv",
+            "openai"
         ]
         
         for dep_name in dependencies:

@@ -19,12 +19,48 @@ class IntegrationTestRunner:
     """Integration test runner for Wikipedia Agent."""
     
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required for integration tests")
+        # Support multiple providers for testing
+        self.provider_configs = self._detect_available_providers()
+        if not self.provider_configs:
+            raise ValueError(
+                "No API keys found for integration tests. Set one of: "
+                "GEMINI_API_KEY, OPENAI_API_KEY, AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, "
+                "HUGGINGFACE_API_KEY"
+            )
         
         self.passed = 0
         self.total = 0
+        
+        # Use the first available provider for testing
+        self.test_provider = list(self.provider_configs.keys())[0]
+        self.test_config = self.provider_configs[self.test_provider]
+        print(f"🤖 Running integration tests with {self.test_provider} provider")
+    
+    def _detect_available_providers(self):
+        """Detect available providers for testing."""
+        configs = {}
+        
+        # Check Gemini (legacy support)
+        if os.getenv("GEMINI_API_KEY"):
+            configs['gemini'] = {'api_key': os.getenv("GEMINI_API_KEY")}
+            
+        # Check OpenAI
+        if os.getenv("OPENAI_API_KEY"):
+            configs['openai'] = {'api_key': os.getenv("OPENAI_API_KEY")}
+            
+        # Check Azure OpenAI
+        if os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+            configs['azure'] = {
+                'api_key': os.getenv("AZURE_OPENAI_API_KEY"),
+                'azure_endpoint': os.getenv("AZURE_OPENAI_ENDPOINT"),
+                'api_version': os.getenv("AZURE_OPENAI_API_VERSION")
+            }
+            
+        # Check Hugging Face
+        if os.getenv("HUGGINGFACE_API_KEY"):
+            configs['huggingface'] = {'api_key': os.getenv("HUGGINGFACE_API_KEY")}
+            
+        return configs
     
     def run_test(self, test_name: str, test_func) -> bool:
         """Run a single test and track results."""
@@ -48,19 +84,31 @@ class IntegrationTestRunner:
     def test_agent_initialization_with_real_api(self) -> bool:
         """Test agent initialization with real API key."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=3)
+            agent = WikipediaAgent(
+                provider_name=self.test_provider,
+                max_iterations=3,
+                **self.test_config
+            )
             assert agent.max_iterations == 3
-            assert agent.model is not None
-            print("Agent initialized successfully with real API key")
+            assert agent.provider is not None
+            print(f"Agent initialized successfully with {self.test_provider} provider")
             return True
         except Exception as e:
             print(f"Failed to initialize agent: {e}")
             return False
     
+    def _create_test_agent(self, max_iterations=3):
+        """Helper method to create test agent with current provider."""
+        return WikipediaAgent(
+            provider_name=self.test_provider,
+            max_iterations=max_iterations,
+            **self.test_config
+        )
+    
     def test_wikipedia_search_functionality(self) -> bool:
         """Test Wikipedia search functionality."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=1)
+            agent = self._create_test_agent(max_iterations=1)
             
             # Test searching for a well-known topic
             content = agent.search_wikipedia("Python programming language")
@@ -80,9 +128,9 @@ class IntegrationTestRunner:
             return False
     
     def test_search_term_generation(self) -> bool:
-        """Test search term generation using Gemini AI."""
+        """Test search term generation using LLM provider."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=1)
+            agent = self._create_test_agent(max_iterations=1)
             
             question = "Who was the first person to walk on the moon?"
             search_terms = agent.generate_search_terms(question)
@@ -107,9 +155,9 @@ class IntegrationTestRunner:
             return False
     
     def test_answer_generation(self) -> bool:
-        """Test answer generation using Gemini AI."""
+        """Test answer generation using LLM provider."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=1)
+            agent = self._create_test_agent(max_iterations=1)
             
             question = "What is the capital of France?"
             # Use a simple Wikipedia context
@@ -135,7 +183,7 @@ class IntegrationTestRunner:
     def test_complete_workflow_simple_question(self) -> bool:
         """Test complete workflow with a simple question."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=3)
+            agent = self._create_test_agent(max_iterations=3)
             
             question = "What is the capital of Japan?"
             answer, search_terms = agent.process_query(question)
@@ -163,7 +211,7 @@ class IntegrationTestRunner:
     def test_complete_workflow_complex_question(self) -> bool:
         """Test complete workflow with a more complex question."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=3)
+            agent = self._create_test_agent(max_iterations=3)
             
             question = "Who invented the telephone?"
             answer, search_terms = agent.process_query(question)
@@ -193,7 +241,7 @@ class IntegrationTestRunner:
         """Test max iterations parameter functionality."""
         try:
             # Test with 1 iteration
-            agent = WikipediaAgent(self.api_key, max_iterations=1)
+            agent = self._create_test_agent(max_iterations=1)
             question = "What is quantum computing?"
             
             answer, search_terms = agent.process_query(question)
@@ -321,7 +369,15 @@ class IntegrationTestRunner:
     def test_error_handling_invalid_api_key(self) -> bool:
         """Test error handling with invalid API key."""
         try:
-            agent = WikipediaAgent("invalid_api_key", max_iterations=1)
+            # Create agent with invalid API key for the current provider
+            invalid_config = self.test_config.copy()
+            invalid_config['api_key'] = "invalid_api_key"
+            
+            agent = WikipediaAgent(
+                provider_name=self.test_provider,
+                max_iterations=1,
+                **invalid_config
+            )
             question = "What is Python?"
             
             answer, search_terms = agent.process_query(question)
@@ -340,7 +396,7 @@ class IntegrationTestRunner:
     def test_readme_examples(self) -> bool:
         """Test examples from README documentation."""
         try:
-            agent = WikipediaAgent(self.api_key, max_iterations=3)
+            agent = self._create_test_agent(max_iterations=3)
             
             # Test README examples
             examples = [
@@ -408,10 +464,28 @@ class IntegrationTestRunner:
 
 def main():
     """Main entry point for integration tests."""
-    if not os.getenv("GEMINI_API_KEY"):
-        print("❌ Error: GEMINI_API_KEY environment variable is required for integration tests")
+    # Check if any API keys are available
+    available_keys = []
+    if os.getenv("GEMINI_API_KEY"):
+        available_keys.append("GEMINI_API_KEY")
+    if os.getenv("OPENAI_API_KEY"):
+        available_keys.append("OPENAI_API_KEY")
+    if os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+        available_keys.append("AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT")
+    if os.getenv("HUGGINGFACE_API_KEY"):
+        available_keys.append("HUGGINGFACE_API_KEY")
+    
+    if not available_keys:
+        print("❌ Error: No API keys found for integration tests")
+        print("   Set one of these environment variables:")
+        print("   - GEMINI_API_KEY for Google Gemini")
+        print("   - OPENAI_API_KEY for OpenAI")
+        print("   - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT for Azure OpenAI")
+        print("   - HUGGINGFACE_API_KEY for Hugging Face")
         print("   These tests validate the actual functionality with real API calls")
         sys.exit(1)
+    
+    print(f"🔑 Found API keys: {', '.join(available_keys)}")
     
     runner = IntegrationTestRunner()
     success = runner.run_all_tests()
