@@ -25,7 +25,7 @@ class IntegrationTestRunner:
             raise ValueError(
                 "No API keys found for integration tests. Set one of: "
                 "GEMINI_API_KEY, OPENAI_API_KEY, AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, "
-                "HUGGINGFACE_API_KEY"
+                "HUGGINGFACE_API_KEY, or ensure Ollama is running at http://localhost:11434"
             )
         
         self.passed = 0
@@ -59,6 +59,18 @@ class IntegrationTestRunner:
         # Check Hugging Face
         if os.getenv("HUGGINGFACE_API_KEY"):
             configs['huggingface'] = {'api_key': os.getenv("HUGGINGFACE_API_KEY")}
+            
+        # Check Ollama (local server)
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=5)
+            if response.status_code == 200:
+                configs['ollama'] = {
+                    'base_url': os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+                    'model': os.getenv("OLLAMA_MODEL", "qwen3:0.6b")
+                }
+        except (requests.RequestException, ImportError):
+            pass
             
         return configs
     
