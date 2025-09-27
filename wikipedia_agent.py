@@ -13,8 +13,17 @@ from typing import List, Optional, Tuple
 from providers import ProviderFactory, get_provider_config_from_env
 
 
+class SearchResult:
+    """Container for search result data."""
+    def __init__(self, term: str, url: str = None, summary: str = None, found_relevant_info: bool = False):
+        self.term = term
+        self.url = url
+        self.summary = summary
+        self.found_relevant_info = found_relevant_info
+
+
 class WikipediaAgent:
-    """A simple agent that answers questions using Wikipedia and various LLM providers."""
+    """An intelligent agent that answers questions using Wikipedia with iterative search and validation."""
     
     def __init__(self, provider_name: str = None, api_key: str = None, model: str = None, 
                  temperature: float = 0.7, max_tokens: int = 1000, 
@@ -144,21 +153,21 @@ Search terms:"""
             # Fallback: extract key words from the question
             return [question]
     
-    def search_wikipedia(self, search_term: str) -> Optional[str]:
+    def search_wikipedia(self, search_term: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Search Wikipedia for a given term and return the content.
+        Search Wikipedia for a given term and return the content and URL.
         
         Args:
             search_term: Term to search for
             
         Returns:
-            Wikipedia page content or None if not found
+            Tuple of (content, url) or (None, None) if not found
         """
         try:
             # Search for pages
             search_results = wikipedia.search(search_term, results=3)
             if not search_results:
-                return None
+                return None, None
             
             # Try to get the first result
             page = wikipedia.page(search_results[0])
@@ -170,20 +179,56 @@ Search terms:"""
                 additional_content = page.content[len(page.summary):2000]
                 content = page.summary + "\n\n" + additional_content
             
-            return content
+            return content, page.url
             
         except wikipedia.exceptions.DisambiguationError as e:
             # Try the first disambiguation option
             try:
                 page = wikipedia.page(e.options[0])
-                return page.summary
-            except:
-                return None
+                return page.summary, page.url
+            except Exception:
+                return None, None
         except wikipedia.exceptions.PageError:
-            return None
+            return None, None
         except Exception as e:
             print(f"Error searching Wikipedia for '{search_term}': {e}")
-            return None
+            return None, None
+    
+    def validate_answer_completeness(self, question: str, answer: str) -> bool:
+        """
+        Validate if the generated answer adequately addresses the question.
+        
+        Args:
+            question: The original question
+            answer: The generated answer
+            
+        Returns:
+            True if answer is satisfactory, False otherwise
+        """
+        # Clean the answer first
+        cleaned_answer = self._clean_llm_response(answer)
+        
+        # Simple heuristic validation (more reliable than LLM validation for this model)
+        if len(cleaned_answer) < 20:
+            return False
+            
+        # Check for obvious non-answers
+        non_answer_phrases = [
+            "don't have enough information",
+            "not enough information", 
+            "cannot answer",
+            "insufficient information",
+            "more information needed",
+            "unable to determine"
+        ]
+        
+        cleaned_lower = cleaned_answer.lower()
+        for phrase in non_answer_phrases:
+            if phrase in cleaned_lower:
+                return False
+                
+        # If it's a reasonable length and doesn't contain non-answer phrases, consider it valid
+        return True
     
     def answer_question(self, question: str, context: str) -> str:
         """
@@ -198,7 +243,8 @@ Search terms:"""
         """
         answer_system_prompt = (
             "You are a knowledgeable assistant that provides accurate answers based on Wikipedia content. "
-            "Always base your answers strictly on the provided information and be precise and factual."
+            "Always base your answers strictly on the provided information and be precise and factual. "
+            "Do not include thinking tokens or reasoning in your response - provide only the direct answer."
         )
         
         prompt = f"""Based on the following Wikipedia content, answer the user's question accurately and concisely.
@@ -213,65 +259,209 @@ Instructions:
 - If the content doesn't contain enough information to answer the question, say so
 - Keep the answer concise but complete
 - Cite specific facts from the Wikipedia content when relevant
+- Do not include any thinking process or reasoning tags in your response
 
 Answer:"""
 
         try:
             response = self.provider.generate_content(prompt, system_prompt=answer_system_prompt)
-            return response.strip()
+            # Clean up thinking tokens and other artifacts
+            cleaned_response = self._clean_llm_response(response)
+            return cleaned_response.strip()
         except Exception as e:
             return f"Error generating answer: {e}"
     
-    def process_query(self, question: str) -> Tuple[str, List[str]]:
+    def _clean_llm_response(self, response: str) -> str:
         """
-        Process a user query through iterative Wikipedia search.
+        Clean up LLM response by removing thinking tokens and other artifacts.
+        
+        Args:
+            response: Raw response from LLM
+            
+        Returns:
+            Cleaned response
+        """
+        import re
+        
+        # First, try to extract content between thinking tags and actual answer
+        if "<think>" in response and "Human:" in response:
+            # Extract the part after the thinking section and before "Human:"
+            parts = response.split("Human:")
+            if len(parts) > 1:
+                # Look for "Answer:" in the first part after thinking
+                first_part = parts[0]
+                if "Answer:" in first_part:
+                    answer_parts = first_part.split("Answer:")
+                    if len(answer_parts) > 1:
+                        cleaned = answer_parts[-1].strip()
+                        if len(cleaned) > 10:
+                            return cleaned
+        
+        # Remove thinking tokens
+        cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        cleaned = re.sub(r'<think>.*', '', cleaned, flags=re.DOTALL)
+        
+        # Remove other common artifacts
+        cleaned = re.sub(r'<\|endoftext\|>.*', '', cleaned, flags=re.DOTALL)
+        
+        # Split on "Human:" and keep only the first part
+        if "Human:" in cleaned:
+            cleaned = cleaned.split("Human:")[0]
+        
+        # Look for "Answer:" pattern and extract what follows
+        if "Answer:" in cleaned:
+            answer_parts = cleaned.split("Answer:")
+            if len(answer_parts) > 1:
+                cleaned = answer_parts[-1].strip()
+        
+        # Clean up multiple newlines and whitespace
+        cleaned = re.sub(r'\n\s*\n', '\n', cleaned)
+        cleaned = cleaned.strip()
+        
+        # If response is still empty or too short after cleaning, try a different approach
+        if len(cleaned) < 10:
+            # Look for any substantial text after common prefixes
+            lines = response.split('\n')
+            substantial_lines = [line.strip() for line in lines if len(line.strip()) > 20 and 
+                               not line.strip().startswith('<') and 
+                               'think>' not in line.lower() and
+                               'human:' not in line.lower()]
+            if substantial_lines:
+                return substantial_lines[0]
+        
+        return cleaned if len(cleaned) >= 10 else response.strip()
+    
+    def summarize_search_finding(self, question: str, search_term: str, content: str) -> str:
+        """
+        Generate a brief summary of what was found for a search term in relation to the question.
+        
+        Args:
+            question: The original question
+            search_term: The search term used
+            content: The Wikipedia content found
+            
+        Returns:
+            Brief summary of relevant findings
+        """
+        summary_system_prompt = (
+            "You are an expert at extracting and summarizing relevant information. "
+            "Create concise summaries that capture the key points relevant to the question."
+        )
+        
+        prompt = f"""Summarize what information from this Wikipedia content is relevant to answering the question. Be very brief (2-3 sentences max).
+
+Question: {question}
+Search term: {search_term}
+
+Wikipedia Content:
+{content}
+
+Brief summary of relevant findings:"""
+
+        try:
+            response = self.provider.generate_content(prompt, system_prompt=summary_system_prompt)
+            return response.strip()
+        except Exception as e:
+            return f"Found content for '{search_term}' but could not summarize."
+    
+    def process_query(self, question: str, verbose: bool = False) -> Tuple[str, List[str]]:
+        """
+        Process a user query through iterative Wikipedia search with answer validation.
         
         Args:
             question: The user's question
+            verbose: Whether to print intermediate steps
             
         Returns:
-            Tuple of (answer, search_terms_used)
+            Tuple of (answer, citation_urls)
         """
-        print(f"🤔 Processing question: {question}")
+        if verbose:
+            print(f"🤔 Processing question: {question}")
         
+        search_history = []  # List of SearchResult objects
         previous_attempts = []
-        search_terms_used = []
         
         for iteration in range(self.max_iterations):
-            print(f"\n📍 Iteration {iteration + 1}/{self.max_iterations}")
+            if verbose:
+                print(f"\n📍 Iteration {iteration + 1}/{self.max_iterations}")
             
-            # Generate search terms
+            # Generate search terms based on question and previous attempts
             search_terms = self.generate_search_terms(question, previous_attempts)
-            print(f"🔍 Generated search terms: {', '.join(search_terms)}")
+            if verbose:
+                print(f"🔍 Generated search terms: {', '.join(search_terms)}")
             
             # Try each search term
             for term in search_terms:
                 if term in previous_attempts:
                     continue
                     
-                print(f"   Searching Wikipedia for: {term}")
-                content = self.search_wikipedia(term)
+                if verbose:
+                    print(f"   Searching Wikipedia for: {term}")
                 
-                if content:
-                    print(f"   ✅ Found content ({len(content)} characters)")
-                    search_terms_used.append(term)
+                # Search Wikipedia
+                content, url = self.search_wikipedia(term)
+                
+                if content and url:
+                    if verbose:
+                        print(f"   ✅ Found content ({len(content)} characters)")
                     
-                    # Generate answer
+                    # Generate answer from this content
                     answer = self.answer_question(question, content)
                     
-                    # Simple check if answer seems complete
-                    if len(answer) > 50 and "don't have enough information" not in answer.lower():
-                        return answer, search_terms_used
+                    # Validate if this answer is satisfactory
+                    is_satisfactory = self.validate_answer_completeness(question, answer)
+                    
+                    if is_satisfactory:
+                        # We found a satisfactory answer!
+                        search_result = SearchResult(
+                            term=term, 
+                            url=url, 
+                            summary=self.summarize_search_finding(question, term, content),
+                            found_relevant_info=True
+                        )
+                        search_history.append(search_result)
+                        
+                        # Return the final answer with citation
+                        citation_urls = list(dict.fromkeys([result.url for result in search_history if result.url]))
+                        return answer, citation_urls
+                    else:
+                        # Answer not satisfactory, but record what we found
+                        search_result = SearchResult(
+                            term=term,
+                            url=url,
+                            summary=self.summarize_search_finding(question, term, content),
+                            found_relevant_info=False
+                        )
+                        search_history.append(search_result)
+                        
+                        if verbose:
+                            print(f"   ℹ️ Found some info but answer not complete, continuing search...")
                 else:
-                    print(f"   ❌ No content found")
+                    if verbose:
+                        print(f"   ❌ No content found")
                 
                 previous_attempts.append(term)
             
-            # If we didn't find a good answer, continue to next iteration
-            print(f"   No satisfactory answer found in iteration {iteration + 1}")
+            # If we didn't find a satisfactory answer, continue to next iteration
+            if verbose:
+                print(f"   No complete answer found in iteration {iteration + 1}")
         
-        # If we've exhausted all iterations
-        return "I couldn't find a satisfactory answer to your question after searching Wikipedia with multiple terms. Please try rephrasing your question or asking about a different topic.", search_terms_used
+        # If we've exhausted all iterations, try to combine information from all searches
+        if search_history:
+            combined_context = "\n\n".join([
+                f"From '{result.term}': {result.summary}" 
+                for result in search_history 
+                if result.summary
+            ])
+            
+            if combined_context:
+                final_answer = self.answer_question(question, combined_context)
+                citation_urls = list(dict.fromkeys([result.url for result in search_history if result.url]))
+                return final_answer, citation_urls
+        
+        # If we still couldn't find anything useful
+        return ("I couldn't find a satisfactory answer to your question after searching Wikipedia with multiple terms. "
+                "Please try rephrasing your question or asking about a different topic."), []
 
 
 def main():
@@ -299,7 +489,7 @@ Supported providers: openai, azure, gemini, ollama, huggingface
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=3,
+        default=10,
         help="Maximum number of search iterations (default: 3)"
     )
     
@@ -394,19 +584,23 @@ Supported providers: openai, azure, gemini, ollama, huggingface
             **provider_kwargs
         )
         
-        print(f"🤖 Using {agent.provider_name} provider with model: {agent.provider.model}")
+        # Process query (verbose mode for debugging if needed)
+        verbose_mode = os.getenv("WIKIPEDIA_AGENT_VERBOSE", "false").lower() == "true"
+        answer, citation_urls = agent.process_query(args.question, verbose=verbose_mode)
         
-        # Process query
-        answer, search_terms = agent.process_query(args.question)
-        
-        # Display results
+        # Display clean results
         print("\n" + "="*60)
         print("📝 ANSWER:")
         print("="*60)
         print(answer)
         
-        if search_terms:
-            print(f"\n🔍 Search terms used: {', '.join(search_terms)}")
+        # Display Wikipedia sources
+        if citation_urls:
+            print(f"\n� Sources:")
+            for i, url in enumerate(citation_urls, 1):
+                print(f"  {i}. {url}")
+        else:
+            print("\n📚 No specific Wikipedia sources found.")
         
     except Exception as e:
         error_msg = str(e)
