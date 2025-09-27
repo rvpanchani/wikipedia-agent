@@ -111,7 +111,33 @@ Search terms:"""
 
         try:
             response = self.provider.generate_content(prompt, system_prompt=search_system_prompt)
-            search_terms = [term.strip() for term in response.strip().split('\n') if term.strip()]
+            
+            # Clean response from thinking tokens and other noise
+            cleaned_response = response
+            # Remove thinking tokens if present
+            if '<think>' in response:
+                # Extract content after </think> or filter out thinking content
+                import re
+                cleaned_response = re.sub(
+                    r'<think>.*?</think>', '', response, flags=re.DOTALL
+                )
+                # Also handle unclosed think tags
+                cleaned_response = re.sub(
+                    r'<think>.*', '', cleaned_response, flags=re.DOTALL
+                )
+            
+            # Remove common prefixes and clean up
+            cleaned_response = (cleaned_response.replace('- "', '')
+                              .replace('"', '').replace('- ', ''))
+            search_terms = [
+                term.strip() for term in cleaned_response.strip().split('\n') 
+                if term.strip()
+            ]
+            # Filter out empty terms and non-search term content
+            search_terms = [
+                term for term in search_terms 
+                if term and not term.startswith('Search terms:')
+            ]
             return search_terms[:5]  # Limit to 5 terms
         except Exception as e:
             print(f"Error generating search terms: {e}")

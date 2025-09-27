@@ -220,49 +220,116 @@ class GeminiProvider(LLMProvider):
 
 
 class OllamaProvider(LLMProvider):
-    """Ollama local API provider."""
+    """Ollama local API provider using native ollama Python client."""
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
                  base_url: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000, 
-                 system_prompt: Optional[str] = None, **kwargs):
+                 system_prompt: Optional[str] = None, stream: bool = False, **kwargs):
         super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.stream = stream
         self.client = None
         if self.is_available():
-            import openai
-            # Ollama uses OpenAI-compatible API
-            self.client = openai.OpenAI(
-                base_url=f"{self.base_url}/v1",
-                api_key="ollama"  # Ollama doesn't require real API key
-            )
+            import ollama
+            # Create client with custom host if specified
+            if self.base_url != "http://localhost:11434":
+                self.client = ollama.Client(host=self.base_url)
+            else:
+                self.client = ollama.Client()
     
-    def generate_content(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate content using Ollama API."""
+    def generate_content(self, prompt: str, system_prompt: Optional[str] = None, 
+                        enable_thinking: bool = False, **kwargs) -> str:
+        """Generate content using native Ollama API with advanced features."""
         if not self.client:
             raise RuntimeError("Ollama client not initialized")
         
         try:
-            messages = self._prepare_messages(prompt, system_prompt)
-            response = self.client.chat.completions.create(
+            # Prepare options for the generation
+            options = {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+            }
+            
+            # Add any additional options from kwargs
+            options.update(kwargs)
+            
+            # Use provided system prompt or instance default
+            effective_system_prompt = system_prompt or self.system_prompt
+            
+            # For models that support thinking mode (like qwen models)
+            if enable_thinking and "qwen" in self.model.lower():
+                # Enable thinking mode for compatible models
+                options["enable_thinking"] = True
+            
+            # Use chat endpoint with proper message formatting
+            messages = self._prepare_messages(prompt, effective_system_prompt)
+            
+            response = self.client.chat(
                 model=self.model,
                 messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
+                stream=self.stream,
+                options=options
             )
-            return response.choices[0].message.content.strip()
+            
+            if self.stream:
+                # Handle streaming response
+                content = ""
+                for chunk in response:
+                    if 'message' in chunk and 'content' in chunk['message']:
+                        content += chunk['message']['content']
+                return content.strip()
+            else:
+                # Handle non-streaming response
+                if 'message' in response and 'content' in response['message']:
+                    return response['message']['content'].strip()
+                else:
+                    raise RuntimeError("Unexpected response format from Ollama")
+                    
         except Exception as e:
             raise RuntimeError(f"Ollama API error: {e}")
+    
+    def generate_with_thinking(self, prompt: str, 
+                              system_prompt: Optional[str] = None) -> str:
+        """Generate content with thinking mode enabled (for compatible models)."""
+        return self.generate_content(prompt, system_prompt, enable_thinking=True)
+    
+    def list_models(self) -> List[Dict[str, Any]]:
+        """List available models in Ollama."""
+        if not self.client:
+            raise RuntimeError("Ollama client not initialized")
+        
+        try:
+            response = self.client.list()
+            return response.get('models', [])
+        except Exception as e:
+            raise RuntimeError(f"Failed to list Ollama models: {e}")
+    
+    def pull_model(self, model_name: str) -> bool:
+        """Pull a model to make it available in Ollama."""
+        if not self.client:
+            raise RuntimeError("Ollama client not initialized")
+        
+        try:
+            self.client.pull(model_name)
+            return True
+        except Exception as e:
+            print(f"Failed to pull model {model_name}: {e}")
+            return False
     
     def is_available(self) -> bool:
         """Check if Ollama is available."""
         try:
-            import openai
-            import requests
-            # Check if Ollama server is running
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            return response.status_code == 200
-        except (ImportError, requests.RequestException):
+            import ollama
+            # Test connection to Ollama server
+            if self.base_url != "http://localhost:11434":
+                test_client = ollama.Client(host=self.base_url)
+            else:
+                test_client = ollama.Client()
+            # This will raise an exception if server is not available
+            test_client.list()
+            return True
+        except (ImportError, Exception):
             return False
     
     @classmethod
@@ -274,9 +341,11 @@ class HuggingFaceProvider(LLMProvider):
     """Hugging Face API provider (using OpenAI-compatible endpoint)."""
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, 
-                 base_url: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 1000, 
-                 system_prompt: Optional[str] = None, **kwargs):
-        super().__init__(api_key, model, temperature, max_tokens, system_prompt, **kwargs)
+                 base_url: Optional[str] = None, temperature: float = 0.7, 
+                 max_tokens: int = 1000, system_prompt: Optional[str] = None, 
+                 **kwargs):
+        super().__init__(api_key, model, temperature, max_tokens, 
+                        system_prompt, **kwargs)
         self.model = model or self.get_default_model()
         self.base_url = base_url or os.getenv("HUGGINGFACE_BASE_URL", "https://api.huggingface.co/v1")
         self.client = None
@@ -307,7 +376,7 @@ class HuggingFaceProvider(LLMProvider):
     def is_available(self) -> bool:
         """Check if Hugging Face is available."""
         try:
-            import openai
+            import openai  # noqa: F401
             return bool(self.api_key)
         except ImportError:
             return False
@@ -337,7 +406,10 @@ class ProviderFactory:
         provider_name = provider_name.lower().strip()
         if provider_name not in cls.PROVIDERS:
             available = ', '.join(cls.PROVIDERS.keys())
-            raise ValueError(f"Unknown provider '{provider_name}'. Available providers: {available}")
+            raise ValueError(
+                f"Unknown provider '{provider_name}'. "
+                f"Available providers: {available}"
+            )
         
         provider_class = cls.PROVIDERS[provider_name]
         return provider_class(**kwargs)
@@ -362,11 +434,11 @@ class ProviderFactory:
         
         # Check for local Ollama
         try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            if response.status_code == 200:
-                return "ollama"
-        except:
+            import ollama
+            client = ollama.Client()
+            client.list()  # Test connection
+            return "ollama"
+        except Exception:
             pass
         
         return None
