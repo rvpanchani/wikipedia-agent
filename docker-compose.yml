@@ -9,6 +9,8 @@ services:
       - USE_OLLAMA=true
       - OLLAMA_MODEL=qwen3:0.6b
       - OLLAMA_BASE_URL=http://localhost:11434
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
     ports:
       - "11434:11434"  # Expose Ollama API
     volumes:
@@ -16,19 +18,28 @@ services:
     profiles:
       - ollama
     command: ["--help"]  # Show help by default
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # Wikipedia Agent with cloud providers (API keys required)
   wikipedia-agent-cloud:
     build: .
     container_name: wikipedia-agent-cloud
     environment:
+      # Disable Ollama for cloud-only setup
+      - USE_OLLAMA=false
+      
       # OpenAI Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-3.5-turbo}
       
       # Google Gemini Configuration
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash-exp}
       
       # Azure OpenAI Configuration
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
@@ -51,6 +62,8 @@ services:
       # Enable all providers for development
       - USE_OLLAMA=true
       - OLLAMA_MODEL=qwen3:0.6b
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
@@ -59,11 +72,33 @@ services:
     ports:
       - "11434:11434"  # Ollama API
     volumes:
-      - ollama-data:/home/app/.ollama
-      - .:/home/app  # Mount source code for development
+      - ollama-data:/home/app/.ollama  # Persist Ollama models
+      - .:/home/app/workspace  # Mount source code for development (avoid overwriting app files)
     profiles:
       - dev
     command: ["bash"]  # Interactive shell for development
+    stdin_open: true
+    tty: true
+
+  # Quick run service for one-off questions
+  wikipedia-agent:
+    build: .
+    container_name: wikipedia-agent-quick
+    environment:
+      - USE_OLLAMA=true
+      - OLLAMA_MODEL=qwen3:0.6b
+      - OLLAMA_HOST=0.0.0.0
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY:-}
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/home/app/.ollama
+    profiles:
+      - default
 
 volumes:
   ollama-data:

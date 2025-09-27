@@ -21,6 +21,8 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -28,6 +30,7 @@ MANIFEST
 venv/
 env/
 ENV/
+.venv/
 
 # IDE and editor files
 .vscode/
@@ -38,10 +41,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Documentation and markdown files (except README)
+# Documentation and markdown files (keep essential ones)
 *.md
 !README.md
 !PROVIDERS.md
+!DOCKER.md
 
 # Test files and temporary files
 test_*.log
@@ -50,15 +54,16 @@ test_*.log
 .pytest_cache/
 .coverage
 htmlcov/
+*.pyc
 
 # Environment files
 .env
 .env.local
 .env.example
 
-# Docker files (to avoid recursion)
+# Docker files (avoid recursion but keep compose file)
 Dockerfile*
-docker-compose*.yml
+!Dockerfile
 .dockerignore
 
 # CI/CD files
@@ -80,9 +85,18 @@ logs/
 ehthumbs.db
 Thumbs.db
 
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Ollama data directory
+.ollama/
+
+# Node modules (if any)
+node_modules/
+
 # Application specific
 demo.py
-setup.py
 INTEGRATION_TESTS_READY.md
 TESTING.md
 validate_setup.py

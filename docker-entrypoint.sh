@@ -7,13 +7,39 @@ echo "🐳 Starting Wikipedia Agent Docker Container"
 
 # Function to check if Ollama is needed
 needs_ollama() {
-    # Check if user explicitly wants Ollama or if no other provider is configured
-    if [[ "$USE_OLLAMA" == "true" ]] || [[ "$1" == "--provider" && "$2" == "ollama" ]]; then
+    # Don't use Ollama for help commands
+    local args=("$@")
+    for arg in "${args[@]}"; do
+        if [[ "$arg" == "--help" || "$arg" == "help" ]]; then
+            return 1
+        fi
+    done
+    
+    # Check if user explicitly wants Ollama
+    if [[ "$USE_OLLAMA" == "true" ]]; then
         return 0
     fi
     
-    # Check if no other providers are configured (auto-detect Ollama usage)
-    if [[ -z "$OPENAI_API_KEY" && -z "$GEMINI_API_KEY" && -z "$AZURE_OPENAI_API_KEY" && -z "$HUGGINGFACE_API_KEY" ]]; then
+    # Check if --provider ollama is specified in arguments
+    for i in "${!args[@]}"; do
+        if [[ "${args[$i]}" == "--provider" && "${args[$((i+1))]}" == "ollama" ]]; then
+            return 0
+        fi
+    done
+    
+    # Don't auto-enable Ollama if any cloud provider is configured
+    if [[ -n "$OPENAI_API_KEY" || -n "$GEMINI_API_KEY" || -n "$AZURE_OPENAI_API_KEY" || -n "$HUGGINGFACE_API_KEY" ]]; then
+        return 1
+    fi
+    
+    # For actual questions (not help), enable Ollama if no cloud providers configured
+    if [[ "$1" != -* ]]; then
+        echo "📡 No API keys detected for cloud providers, enabling Ollama for local inference"
+        return 0
+    fi
+    
+    # For other CLI arguments that need a provider, check if Ollama is available
+    if command -v ollama >/dev/null 2>&1; then
         echo "📡 No API keys detected for cloud providers, enabling Ollama for local inference"
         return 0
     fi
@@ -25,37 +51,68 @@ needs_ollama() {
 setup_ollama() {
     echo "🦙 Setting up Ollama..."
     
+    # Check if Ollama is installed
+    if ! command -v ollama >/dev/null 2>&1; then
+        echo "❌ Ollama is not installed in this container"
+        echo "💡 To use Ollama, rebuild the container with: docker build --build-arg INSTALL_OLLAMA=true ."
+        echo "💡 Or use a cloud provider with API keys instead"
+        exit 1
+    fi
+    
+    # Ensure Ollama data directory exists and has proper permissions
+    mkdir -p ~/.ollama
+    
     # Start Ollama server in background
     echo "🔄 Starting Ollama server..."
-    ollama serve &
+    OLLAMA_HOST=0.0.0.0 ollama serve &
     OLLAMA_PID=$!
     
     # Wait for Ollama to be ready
     echo "⏳ Waiting for Ollama server to be ready..."
-    for i in {1..30}; do
+    for i in {1..60}; do
         if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
             echo "✅ Ollama server is ready"
             break
         fi
-        if [ $i -eq 30 ]; then
-            echo "❌ Ollama server failed to start within 30 seconds"
+        if [ $i -eq 60 ]; then
+            echo "❌ Ollama server failed to start within 60 seconds"
+            echo "📋 Debug info:"
+            echo "   - Ollama PID: $OLLAMA_PID"
+            echo "   - Process status: $(ps aux | grep ollama 2>/dev/null || echo 'No ollama process found')"
+            echo "   - Port status: $(ss -tlnp 2>/dev/null | grep 11434 || echo 'Port 11434 not in use')"
+            
+            # Try to get Ollama logs
+            if kill -0 $OLLAMA_PID 2>/dev/null; then
+                echo "   - Ollama process is still running, may need more time"
+            else
+                echo "   - Ollama process has exited"
+            fi
             exit 1
         fi
         sleep 1
     done
     
-    # Pull the qwen3:0.6b model if not already present
-    echo "📥 Checking for qwen3:0.6b model..."
-    if ! ollama list | grep -q "qwen3:0.6b"; then
-        echo "📦 Pulling qwen3:0.6b model (523MB)..."
-        ollama pull qwen3:0.6b
-        echo "✅ qwen3:0.6b model ready"
+    # Pull the default model if not already present
+    local model="${OLLAMA_MODEL:-qwen3:0.6b}"
+    echo "📥 Checking for $model model..."
+    if ! ollama list | grep -q "$model"; then
+        echo "📦 Pulling $model model (this may take several minutes)..."
+        if ollama pull "$model"; then
+            echo "✅ $model model ready"
+        else
+            echo "❌ Failed to pull $model model"
+            echo "📋 Available models:"
+            ollama list || echo "   Could not list models"
+            echo "💡 You can manually pull the model with: ollama pull $model"
+            exit 1
+        fi
     else
-        echo "✅ qwen3:0.6b model already available"
+        echo "✅ $model model already available"
     fi
     
     # Store Ollama PID for cleanup
     echo $OLLAMA_PID > /tmp/ollama.pid
+    echo "📝 Ollama server running with PID: $OLLAMA_PID"
 }
 
 # Function to cleanup Ollama on exit
@@ -113,6 +170,10 @@ case "$1" in
     "wikipedia_agent.py"|"python")
         echo "🚀 Running Wikipedia Agent: $@"
         exec "$@"
+        ;;
+    "--help"|"help")
+        echo "🚀 Showing Wikipedia Agent help"
+        exec python wikipedia_agent.py --help
         ;;
     *)
         # Treat as a question for the Wikipedia Agent
