@@ -196,7 +196,83 @@ Search terms:"""
     
     def validate_answer_completeness(self, question: str, answer: str) -> bool:
         """
-        Validate if the generated answer adequately addresses the question.
+        Validate if the generated answer adequately addresses the question using pattern recognition.
+        
+        Args:
+            question: The original question
+            answer: The generated answer with structured patterns
+            
+        Returns:
+            True if answer is satisfactory, False otherwise
+        """
+        # Clean the answer first
+        cleaned_answer = self._clean_llm_response(answer)
+        
+        # Check for structured response patterns
+        if cleaned_answer.startswith("ANSWER_FOUND:"):
+            # Extract the actual answer part
+            actual_answer = cleaned_answer[len("ANSWER_FOUND:"):].strip()
+            # Ensure the answer has substantial content
+            return len(actual_answer) >= 10 and actual_answer.lower() not in [
+                "none", "unknown", "unclear", "not specified", "not mentioned"
+            ]
+        elif cleaned_answer.startswith("INSUFFICIENT_INFO:"):
+            return False
+        else:
+            # Fallback to LLM-based validation for non-structured responses
+            return self._validate_answer_with_llm(question, cleaned_answer)
+    
+    def answer_question(self, question: str, context: str) -> str:
+        """
+        Generate an answer to the question using the Wikipedia context with structured response patterns.
+        
+        Args:
+            question: The user's question
+            context: Wikipedia content as context
+            
+        Returns:
+            Generated answer with structured patterns for validation
+        """
+        answer_system_prompt = (
+            "You are a knowledgeable assistant that provides accurate answers based on Wikipedia content. "
+            "You must respond using specific patterns to indicate whether you found sufficient information. "
+            "Always base your answers strictly on the provided information and be precise and factual."
+        )
+        
+        prompt = f"""Based on the following Wikipedia content, answer the user's question using the specified response pattern.
+
+Wikipedia Content:
+{context}
+
+Question: {question}
+
+CRITICAL: You MUST respond using EXACTLY one of these two formats. Do not add any other text:
+
+Format 1 - If the Wikipedia content contains sufficient information to answer the question:
+ANSWER_FOUND: [your complete factual answer based on the Wikipedia content]
+
+Format 2 - If the Wikipedia content does NOT contain sufficient information:
+INSUFFICIENT_INFO: [brief explanation of what information is missing]
+
+IMPORTANT:
+- Start your response with either "ANSWER_FOUND:" or "INSUFFICIENT_INFO:"
+- Do not include any reasoning, thinking, or additional commentary
+- Do not use any other format
+- Base your determination strictly on the provided Wikipedia content
+
+Response:"""
+
+        try:
+            response = self.provider.generate_content(prompt, system_prompt=answer_system_prompt)
+            # Clean up thinking tokens and other artifacts
+            cleaned_response = self._clean_llm_response(response)
+            return cleaned_response.strip()
+        except Exception as e:
+            return f"INSUFFICIENT_INFO: Error generating answer: {e}"
+    
+    def _validate_answer_with_llm(self, question: str, answer: str) -> bool:
+        """
+        Use LLM to validate if an answer adequately addresses the question (fallback method).
         
         Args:
             question: The original question
@@ -205,71 +281,60 @@ Search terms:"""
         Returns:
             True if answer is satisfactory, False otherwise
         """
-        # Clean the answer first
-        cleaned_answer = self._clean_llm_response(answer)
-        
-        # Simple heuristic validation (more reliable than LLM validation for this model)
-        if len(cleaned_answer) < 20:
-            return False
-            
-        # Check for obvious non-answers
-        non_answer_phrases = [
-            "don't have enough information",
-            "not enough information", 
-            "cannot answer",
-            "insufficient information",
-            "more information needed",
-            "unable to determine"
-        ]
-        
-        cleaned_lower = cleaned_answer.lower()
-        for phrase in non_answer_phrases:
-            if phrase in cleaned_lower:
-                return False
-                
-        # If it's a reasonable length and doesn't contain non-answer phrases, consider it valid
-        return True
-    
-    def answer_question(self, question: str, context: str) -> str:
-        """
-        Generate an answer to the question using the Wikipedia context.
-        
-        Args:
-            question: The user's question
-            context: Wikipedia content as context
-            
-        Returns:
-            Generated answer
-        """
-        answer_system_prompt = (
-            "You are a knowledgeable assistant that provides accurate answers based on Wikipedia content. "
-            "Always base your answers strictly on the provided information and be precise and factual. "
-            "Do not include thinking tokens or reasoning in your response - provide only the direct answer."
+        validation_system_prompt = (
+            "You are an expert at evaluating whether answers adequately address questions. "
+            "Respond with exactly 'VALID' or 'INVALID' based on the criteria provided."
         )
         
-        prompt = f"""Based on the following Wikipedia content, answer the user's question accurately and concisely.
-
-Wikipedia Content:
-{context}
+        prompt = f"""Evaluate whether this answer adequately addresses the given question.
 
 Question: {question}
+Answer: {answer}
 
-Instructions:
-- Answer directly and factually based only on the provided Wikipedia content
-- If the content doesn't contain enough information to answer the question, say so
-- Keep the answer concise but complete
-- Cite specific facts from the Wikipedia content when relevant
-- Do not include any thinking process or reasoning tags in your response
+Criteria for VALID answer:
+- Directly addresses the question asked
+- Contains specific, factual information
+- Is not vague or evasive
+- Provides meaningful content (not just "I don't know" type responses)
 
-Answer:"""
+Criteria for INVALID answer:
+- Doesn't address the question
+- Contains only vague or non-specific information
+- Explicitly states lack of information without providing any relevant details
+- Is too short or lacks substance
 
+Respond with exactly one word: VALID or INVALID
+
+Evaluation:"""
+        
         try:
-            response = self.provider.generate_content(prompt, system_prompt=answer_system_prompt)
-            # Clean up thinking tokens and other artifacts
-            cleaned_response = self._clean_llm_response(response)
-            return cleaned_response.strip()
+            response = self.provider.generate_content(prompt, system_prompt=validation_system_prompt)
+            cleaned_response = response.strip().upper()
+            return cleaned_response == "VALID"
         except Exception as e:
-            return f"Error generating answer: {e}"
+            # Fallback to basic length check if LLM validation fails
+            return len(answer.strip()) >= 20
+    
+    def _extract_final_answer(self, structured_response: str) -> str:
+        """
+        Extract the final answer from structured response patterns.
+        
+        Args:
+            structured_response: Response with ANSWER_FOUND: or INSUFFICIENT_INFO: patterns
+            
+        Returns:
+            Clean answer text for display to user
+        """
+        cleaned_response = self._clean_llm_response(structured_response)
+        
+        if cleaned_response.startswith("ANSWER_FOUND:"):
+            return cleaned_response[len("ANSWER_FOUND:"):].strip()
+        elif cleaned_response.startswith("INSUFFICIENT_INFO:"):
+            reason = cleaned_response[len("INSUFFICIENT_INFO:"):].strip()
+            return f"I couldn't find sufficient information to answer your question. {reason}"
+        else:
+            # Fallback for non-structured responses
+            return cleaned_response
     
     def _clean_llm_response(self, response: str) -> str:
         """
@@ -423,7 +488,8 @@ Brief summary of relevant findings:"""
                         
                         # Return the final answer with citation
                         citation_urls = list(dict.fromkeys([result.url for result in search_history if result.url]))
-                        return answer, citation_urls
+                        clean_answer = self._extract_final_answer(answer)
+                        return clean_answer, citation_urls
                     else:
                         # Answer not satisfactory, but record what we found
                         search_result = SearchResult(
@@ -457,7 +523,8 @@ Brief summary of relevant findings:"""
             if combined_context:
                 final_answer = self.answer_question(question, combined_context)
                 citation_urls = list(dict.fromkeys([result.url for result in search_history if result.url]))
-                return final_answer, citation_urls
+                clean_answer = self._extract_final_answer(final_answer)
+                return clean_answer, citation_urls
         
         # If we still couldn't find anything useful
         return ("I couldn't find a satisfactory answer to your question after searching Wikipedia with multiple terms. "
