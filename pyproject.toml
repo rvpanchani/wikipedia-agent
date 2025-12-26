@@ -1,0 +1,57 @@
+[project]
+name = "wikipedia-agent"
+version = "2.0.0"
+description = "A Wikipedia research agent with LLM-powered search and code execution"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "google-generativeai>=0.8.5",
+    "ollama>=0.6.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.1.0",
+    "requests>=2.28.0",
+    "wikipedia>=1.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.0.0",
+]
+
+[project.scripts]
+wikipedia-agent = "wikipedia_agent.cli:main_v2"
+wikipedia-agent-v1 = "wikipedia_agent.cli:main_v1"
+wikipedia-agent-image = "wikipedia_agent.cli:main_image"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "docker: marks tests that require Docker",
+    "network: marks tests that require network access",
+    "slow: marks tests as slow",
+    "docs: marks tests that validate documentation",
+]
