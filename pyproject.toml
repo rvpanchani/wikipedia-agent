@@ -17,6 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "google-generativeai>=0.8.5",
+    "gradio>=4.0.0",
     "ollama>=0.6.0",
     "openai>=1.0.0",
     "python-dotenv>=1.1.0",
@@ -35,6 +36,7 @@ dev = [
 wikipedia-agent = "wikipedia_agent.cli:main_v2"
 wikipedia-agent-v1 = "wikipedia_agent.cli:main_v1"
 wikipedia-agent-image = "wikipedia_agent.cli:main_image"
+wikipedia-agent-ui = "wikipedia_agent.cli:main_ui"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

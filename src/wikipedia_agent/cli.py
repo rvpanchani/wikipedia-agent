@@ -306,6 +306,70 @@ def main_image():
     main()
 
 
+def main_ui():
+    """
+    Entry point for the Gradio web UI.
+    
+    Launches a web interface for the Wikipedia Agent and Image Analysis tools.
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Wikipedia Agent Web UI - Interactive interface for Wikipedia Agent and Image Analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Start the UI on default port (7860)
+  wikipedia-agent-ui
+
+  # Start on a custom port
+  wikipedia-agent-ui --port 8080
+
+  # Make accessible from other machines
+  wikipedia-agent-ui --host 0.0.0.0
+
+  # Create a public shareable link
+  wikipedia-agent-ui --share
+        """
+    )
+    
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Server hostname (use 0.0.0.0 for all interfaces, default: 127.0.0.1)"
+    )
+    
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="Server port (default: 7860)"
+    )
+    
+    parser.add_argument(
+        "--share",
+        action="store_true",
+        help="Create a public shareable link via Gradio"
+    )
+    
+    args = parser.parse_args()
+    
+    # Load environment variables
+    load_dotenv()
+    
+    print("🌐 Starting Wikipedia Agent Web UI...")
+    print(f"   Server: http://{args.host}:{args.port}")
+    if args.share:
+        print("   Creating public shareable link...")
+    
+    from wikipedia_agent.ui.app import launch_ui
+    launch_ui(
+        share=args.share,
+        server_name=args.host,
+        server_port=args.port,
+    )
+
+
 def _print_provider_error(error_msg: str) -> None:
     """Print a helpful error message for provider configuration issues."""
     if "No LLM provider" in error_msg or "not available" in error_msg:
