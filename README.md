@@ -9,6 +9,10 @@ A simple command line agent to answer natural language questions using Wikipedia
 - **Natural Language Questions**: Ask questions in plain English
 - **Intelligent Search**: Uses AI to generate relevant Wikipedia search terms
 - **Iterative Search**: Automatically tries multiple search strategies until it finds a satisfactory answer
+- **Code Execution**: Automatically generates and executes Python code for calculations
+- **Web UI**: Interactive Gradio-based web interface with real-time feedback
+- **Verbose Mode**: See the agent's thinking process in real-time
+- **Image Analysis**: Analyze images using vision-capable LLMs
 - **Simple CLI**: Easy-to-use command line interface with extensive configuration options
 - **Backward Compatible**: Existing Gemini setups continue to work
 - **No Complex Frameworks**: Built with minimal dependencies for maximum reliability
@@ -151,6 +155,45 @@ python wikipedia_agent.py --help
 
 # Supported providers: openai, azure, gemini, ollama, huggingface
 ```
+
+## Web UI
+
+The Wikipedia Agent includes an interactive web interface built with Gradio.
+
+### Starting the Web UI
+
+```bash
+# Start the UI on default port (7860)
+wikipedia-agent-ui
+
+# Start on a custom port
+wikipedia-agent-ui --port 8080
+
+# Make accessible from other machines
+wikipedia-agent-ui --host 0.0.0.0
+
+# Create a public shareable link
+wikipedia-agent-ui --share
+```
+
+### Web UI Features
+
+- **📚 Wikipedia Agent Tab**: Ask questions and get AI-powered answers with Wikipedia sources
+- **🖼️ Image Analysis Tab**: Upload and analyze images using vision-capable LLMs
+- **🧠 Thinking Process Panel**: Enable **Verbose Mode** to see the agent's reasoning in real-time
+- **Markdown Rendering**: Responses are beautifully formatted with headers, code blocks, and clickable links
+- **Provider Configuration**: Switch between providers (OpenAI, Azure, Gemini, Ollama, etc.) directly in the UI
+- **Advanced Settings**: Customize temperature, max tokens, search attempts, and code execution
+
+### Verbose Mode
+
+When enabled, the **Thinking Process** panel shows:
+- Query classification (DIRECT, WIKIPEDIA, COMPUTE, COMBINED)
+- Wikipedia search attempts and results
+- Code generation and execution details
+- Intermediate reasoning steps
+
+![Web UI Screenshot](docs/ui-screenshot.png)
 
 ### Example Output
 
